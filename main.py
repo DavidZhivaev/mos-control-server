@@ -17,6 +17,7 @@ from api.routes.users import router as users_router
 from core.config import settings
 from core.csrf import csrf_check_middleware
 from core.exception_handlers import setup_exception_handlers
+from core.geo_middleware import GeoRestrictionMiddleware
 from core.logging_config import setup_logging
 from core.middleware_hardening import request_hardening_middleware
 from core.redis_rate_limiter import init_redis, close_redis
@@ -26,6 +27,7 @@ setup_logging()
 
 app = FastAPI(title="MOS Control Server")
 
+app.add_middleware(GeoRestrictionMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
