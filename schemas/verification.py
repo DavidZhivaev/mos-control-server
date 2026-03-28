@@ -9,6 +9,7 @@ from utils.sanitizers import (
     validate_email,
     validate_phone,
 )
+from core.password_strength import check_password_strength
 
 
 MAX_PASSWORD_LENGTH = 128
@@ -56,7 +57,7 @@ class VerificationSubmitRequest(BaseModel):
                 raise ValueError("Буква класса должна быть от А до Я")
             return result
         return v
-    
+
     @field_validator("contact_method", mode="before")
     @classmethod
     def validate_contact_method(cls, v):
@@ -69,17 +70,12 @@ class VerificationSubmitRequest(BaseModel):
                 if not validate_phone(v):
                     raise ValueError("Некорректный телефон")
         return v
-    
+
     @model_validator(mode='after')
     def check_password_strength(self):
-        pwd = self.password.lower()
-        weak_passwords = {'password', '123456', 'qwerty', 'admin', 
-                         '123456789', '111111', '123123', 'qwerty123',
-                         'school', 'ученик', 'учитель'}
-        if pwd in weak_passwords:
-            raise ValueError("Слишком простой пароль")
-        if len(set(pwd)) < 4:
-            raise ValueError("Пароль слишком простой")
+        result = check_password_strength(self.password)
+        if not result.is_valid:
+            raise ValueError(result.errors[0])
         return self
 
 

@@ -18,9 +18,11 @@ from core.config import settings
 from core.csrf import csrf_check_middleware
 from core.exception_handlers import setup_exception_handlers
 from core.geo_middleware import GeoRestrictionMiddleware
+from core.jwt_key_manager import get_jwt_key_manager
 from core.logging_config import setup_logging
 from core.middleware_hardening import request_hardening_middleware
 from core.redis_rate_limiter import init_redis, close_redis
+from core.request_logging import RequestLoggingMiddleware, SecurityHeadersMiddleware
 
 
 setup_logging()
@@ -29,12 +31,27 @@ app = FastAPI(title="MOS Control Server")
 
 app.add_middleware(GeoRestrictionMiddleware)
 
+app.add_middleware(RequestLoggingMiddleware)
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+ALLOWED_ORIGINS = [
+    "https://mos-control.local",
+    "https://mos-control.1580.ru",
+    "http://localhost:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:8000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-CSRF-Token", "X-Requested-With"],
+    expose_headers=["X-CSRF-Token", "X-Request-Id"],
+    max_age=600,
 )
 
 
@@ -42,36 +59,17 @@ setup_exception_handlers(app)
 
 
 @app.middleware("http")
-async def security_headers(request, call_next):
-    response = await call_next(request)
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["X-XSS-Protection"] = "1; mode=block"
-    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-    response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
-    
-    is_https = request.headers.get("x-forwarded-proto", "http") == "https"
-    force_https = settings.FORCE_HTTPS or is_https
-    
-    if force_https:
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
-    
-    return response
-
-
-@app.middleware("http")
 async def https_redirect(request, call_next):
     if settings.FORCE_HTTPS:
         is_https = request.headers.get("x-forwarded-proto", "http") == "https"
-        
+
         if not is_https and request.method in ("POST", "PUT", "DELETE", "PATCH"):
             return JSONResponse(
                 status_code=400,
                 content={"detail": "HTTPS required"},
                 headers={"Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload"},
             )
-    
+
     return await call_next(request)
 
 
@@ -87,6 +85,12 @@ async def csrf_check(request, call_next):
 
 @app.on_event("startup")
 async def startup_event():
+    jwt_manager = get_jwt_key_manager()
+    if not jwt_manager.load_keys():
+        private_key, public_key = jwt_manager.generate_key_pair()
+        jwt_manager.save_keys(private_key, public_key, settings.JWT_KEY_ID)
+        jwt_manager.load_keys()
+
     await init_redis()
 
 
@@ -106,8 +110,6 @@ app.include_router(meta_router)
 app.include_router(public_directory.router)
 app.include_router(system_routes.router)
 
-# Регистрация БД
-# Используем DATABASE_URL из конфига (поддерживает SQLite и PostgreSQL)
 register_tortoise(
     app,
     db_url=settings.DATABASE_URL,

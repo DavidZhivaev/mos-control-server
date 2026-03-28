@@ -6,6 +6,7 @@ import bcrypt
 from jose.exceptions import JWTError
 
 from core.config import settings
+from core.logging_config import get_security_audit_logger
 from core.security import create_tokens, decode_jwt
 from models.session import Session
 from models.user import User
@@ -13,6 +14,7 @@ from models.user_credentials import UserCredentials
 from utils.sessions import enforce_session_limit
 
 _dummy_digest: bytes | None = None
+_security_logger = get_security_audit_logger()
 
 LoginResult = tuple[str, str, Session] | Literal["banned"] | None
 
@@ -155,12 +157,26 @@ async def login_user(
 
     if not user:
         _timing_check_unknown_user(password)
+        _security_logger.log_auth_attempt(
+            login=identifier,
+            success=False,
+            ip=ip,
+            user_agent=user_agent,
+            reason="user_not_found"
+        )
         return None
 
     password_hash = await get_password_hash(user)
-    
+
     if not password_hash:
         _timing_check_unknown_user(password)
+        _security_logger.log_auth_attempt(
+            login=identifier,
+            success=False,
+            ip=ip,
+            user_agent=user_agent,
+            reason="no_password_hash"
+        )
         return None
 
     try:
@@ -168,17 +184,45 @@ async def login_user(
             _password_bytes(password), password_hash.encode("utf-8")
         )
     except ValueError:
+        _security_logger.log_auth_attempt(
+            login=identifier,
+            success=False,
+            ip=ip,
+            user_agent=user_agent,
+            reason="hash_error"
+        )
         return None
 
     if not valid:
+        _security_logger.log_auth_attempt(
+            login=identifier,
+            success=False,
+            ip=ip,
+            user_agent=user_agent,
+            reason="invalid_password"
+        )
         return None
 
     if user.is_banned:
+        _security_logger.log_auth_attempt(
+            login=identifier,
+            success=False,
+            ip=ip,
+            user_agent=user_agent,
+            reason="user_banned"
+        )
         return "banned"
 
     if not user.is_active:
+        _security_logger.log_auth_attempt(
+            login=identifier,
+            success=False,
+            ip=ip,
+            user_agent=user_agent,
+            reason="user_inactive"
+        )
         return None
-    
+
     if user.password_hash:
         from services.user_service import migrate_password_to_credentials
         await migrate_password_to_credentials(user)
@@ -200,5 +244,12 @@ async def login_user(
     )
 
     access, refresh = create_tokens(user.id, session_id, session.refresh_version)
+
+    _security_logger.log_auth_attempt(
+        login=identifier,
+        success=True,
+        ip=ip,
+        user_agent=user_agent,
+    )
 
     return access, refresh, session

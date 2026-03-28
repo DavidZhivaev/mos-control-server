@@ -22,6 +22,7 @@ class Settings(BaseSettings):
 
     JWT_PRIVATE_KEY: str = ""
     JWT_PUBLIC_KEY: str = ""
+    JWT_KEY_ID: str = "current"
     JWT_ISSUER: str = "mos-control"
     JWT_AUDIENCE: str = "mos-control-api"
 
@@ -29,10 +30,10 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_TTL: int = 5 * 24 * 3600
     MAX_TOKEN_LIFETIME: int = 14 * 24 * 3600
 
-    TRUST_PROXY: bool = False
+    TRUST_PROXY: bool = True
     TRUSTED_PROXY_IPS: str = "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 
-    FORCE_HTTPS: bool = False
+    FORCE_HTTPS: bool = True
 
     SUPPORT_EMAIL: str = "zhivaevda@1580.ru"
 
@@ -71,7 +72,7 @@ class Settings(BaseSettings):
     DB_MAX_OVERFLOW: int = 20
 
     REDIS_HOST: str = "localhost"
-    REDIS_PORT: int = 6379
+    REDIS_PORT: int = 5432
     REDIS_DB: int = 0
     REDIS_PASSWORD: str | None = None
     USE_REDIS: bool = False
@@ -80,17 +81,11 @@ class Settings(BaseSettings):
     LOG_FILE: str | None = "logs/app.log"
     LOG_AUDIT_FILE: str | None = "logs/audit.log"
 
+    MASTER_SECRET: str = ""
+    DATA_ENCRYPTION_KEY: str | None = None
+
 
 settings = Settings()
-
-_private_key_path = BASE_DIR / "jwt_private.pem"
-_public_key_path = BASE_DIR / "jwt_public.pem"
-
-_check_key_file_permissions(_private_key_path)
-_check_key_file_permissions(_public_key_path)
-
-settings.JWT_PRIVATE_KEY = _private_key_path.read_text()
-settings.JWT_PUBLIC_KEY = _public_key_path.read_text()
 
 if not settings.DATABASE_URL:
     if settings.DB_ENGINE == "postgresql":

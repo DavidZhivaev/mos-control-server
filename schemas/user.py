@@ -76,19 +76,16 @@ class UserSelfUpdate(BaseModel):
 class UserPasswordChange(BaseModel):
     old_password: str = Field(min_length=1, max_length=MAX_PASSWORD_LENGTH)
     new_password: str = Field(min_length=8, max_length=MAX_PASSWORD_LENGTH)
-    
+
     @field_validator("new_password")
     @classmethod
     def validate_new_password(cls, v):
-        pwd = v.lower()
-        weak_passwords = {'password', '123456', 'qwerty', 'admin', 
-                         '123456789', '111111', '123123', 'qwerty123'}
-        if pwd in weak_passwords:
-            raise ValueError("Слишком простой пароль")
-        if len(set(pwd)) < 4:
-            raise ValueError("Пароль слишком простой")
+        from core.password_strength import check_password_strength
+        result = check_password_strength(v)
+        if not result.is_valid:
+            raise ValueError(result.errors[0])
         return v
-    
+
     @model_validator(mode='after')
     def check_passwords_different(self):
         if self.old_password == self.new_password:
