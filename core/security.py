@@ -1,33 +1,55 @@
+from datetime import datetime, timedelta, timezone
+
 from jose import jwt
-from datetime import datetime, timedelta
+
 from core.config import settings
-import uuid
 
 ALGORITHM = "RS256"
 
 
-def create_tokens(user_id: int, session_id: str):
-    now = datetime.utcnow()
+def create_tokens(user_id: int, session_id: str, refresh_version: int):
+    now = datetime.now(timezone.utc)
 
     access_exp = now + timedelta(seconds=settings.ACCESS_TOKEN_TTL)
     refresh_exp = now + timedelta(seconds=settings.REFRESH_TOKEN_TTL)
     max_exp = now + timedelta(seconds=settings.MAX_TOKEN_LIFETIME)
 
-    payload = {
+    base = {
         "sub": str(user_id),
         "sid": session_id,
-        "iat": now.timestamp(),
-        "exp": access_exp.timestamp(),
-        "max_exp": max_exp.timestamp(),
-        "type": "access"
+        "rv": refresh_version,
+        "iat": int(now.timestamp()),
+        "iss": settings.JWT_ISSUER,
+        "aud": settings.JWT_AUDIENCE,
+        "max_exp": int(max_exp.timestamp()),
     }
 
-    access_token = jwt.encode(payload, settings.JWT_PRIVATE_KEY, algorithm=ALGORITHM)
+    access_payload = {
+        **base,
+        "exp": int(access_exp.timestamp()),
+        "type": "access",
+    }
+    access_token = jwt.encode(
+        access_payload, settings.JWT_PRIVATE_KEY, algorithm=ALGORITHM
+    )
 
-    refresh_payload = payload.copy()
-    refresh_payload["exp"] = refresh_exp.timestamp()
-    refresh_payload["type"] = "refresh"
-
-    refresh_token = jwt.encode(refresh_payload, settings.JWT_PRIVATE_KEY, algorithm=ALGORITHM)
+    refresh_payload = {
+        **base,
+        "exp": int(refresh_exp.timestamp()),
+        "type": "refresh",
+    }
+    refresh_token = jwt.encode(
+        refresh_payload, settings.JWT_PRIVATE_KEY, algorithm=ALGORITHM
+    )
 
     return access_token, refresh_token
+
+
+def decode_jwt(token: str) -> dict:
+    return jwt.decode(
+        token,
+        settings.JWT_PUBLIC_KEY,
+        algorithms=[ALGORITHM],
+        audience=settings.JWT_AUDIENCE,
+        issuer=settings.JWT_ISSUER,
+    )

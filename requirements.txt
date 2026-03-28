@@ -1,0 +1,8 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+tortoise-orm>=0.20
+aiosqlite>=0.19
+python-jose[cryptography]>=3.3
+bcrypt>=4.1
+pydantic-settings>=2.0
+email-validator>=2.0

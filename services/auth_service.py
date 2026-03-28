@@ -1,43 +1,131 @@
-from jose import jwt
 from datetime import datetime, timedelta
-from core.config import settings
-from core.security import ALGORITHM, create_tokens
-from passlib.context import CryptContext
-from datetime import datetime, timedelta
+from typing import Literal
 from uuid import uuid4
-from models.user import User
+
+import bcrypt
+from jose.exceptions import JWTError
+
+from core.config import settings
+from core.security import create_tokens, decode_jwt
 from models.session import Session
+from models.user import User
 from utils.sessions import enforce_session_limit
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+_dummy_digest: bytes | None = None
+
+LoginResult = tuple[str, str, Session] | Literal["banned"] | None
 
 
-def refresh_token(refresh_token: str):
-    payload = jwt.decode(refresh_token, settings.JWT_PUBLIC_KEY, algorithms=[ALGORITHM])
-
-    if payload["type"] != "refresh":
-        raise Exception("Invalid token type")
-
-    now = datetime.utcnow().timestamp()
-
-    if now > payload["max_exp"]:
-        raise Exception("Max lifetime exceeded")
-
-    new_payload = payload.copy()
-    new_payload["exp"] = now + settings.ACCESS_TOKEN_TTL
-    new_payload["type"] = "access"
-
-    return jwt.encode(new_payload, settings.JWT_PRIVATE_KEY, algorithm=ALGORITHM)
+def _password_bytes(password: str) -> bytes:
+    return password.encode("utf-8")[:72]
 
 
-async def login_user(email: str, password: str, ip: str, user_agent: str):
-    user = await User.filter(email=email).first()
+def hash_password(plain_password: str) -> str:
+    return bcrypt.hashpw(
+        _password_bytes(plain_password), bcrypt.gensalt()
+    ).decode("utf-8")
+
+
+def verify_password(plain_password: str, password_hash: str) -> bool:
+    try:
+        return bcrypt.checkpw(
+            _password_bytes(plain_password), password_hash.encode("utf-8")
+        )
+    except ValueError:
+        return False
+
+
+def _timing_check_unknown_user(password: str) -> None:
+    global _dummy_digest
+    if _dummy_digest is None:
+        _dummy_digest = bcrypt.hashpw(b"timing", bcrypt.gensalt())
+    try:
+        bcrypt.checkpw(_password_bytes(password), _dummy_digest)
+    except ValueError:
+        pass
+
+
+async def rotate_tokens(refresh_jwt: str):
+    try:
+        payload = decode_jwt(refresh_jwt)
+    except JWTError:
+        return None
+
+    if payload.get("type") != "refresh":
+        return None
+
+    session_id = payload["sid"]
+    token_rv = int(payload.get("rv", -1))
+    user_id = int(payload["sub"])
+
+    now = datetime.utcnow()
+    now_ts = now.timestamp()
+
+    if now_ts > payload["max_exp"]:
+        return None
+
+    session = await Session.get_or_none(id=session_id)
+
+    if not session or not session.is_active:
+        return None
+
+    if token_rv != session.refresh_version:
+        if token_rv < session.refresh_version:
+            session.is_active = False
+            await session.save()
+        return None
+
+    if session.max_expires_at < now:
+        session.is_active = False
+        await session.save()
+        return None
+
+    if session.expires_at < now:
+        return None
+
+    user = await User.get_or_none(id=user_id)
+    if not user or not user.is_active:
+        return None
+    if user.is_banned:
+        session.is_active = False
+        await session.save()
+        return None
+
+    session.refresh_version += 1
+    session.expires_at = now + timedelta(seconds=settings.REFRESH_TOKEN_TTL)
+    await session.save()
+
+    access, refresh = create_tokens(
+        user.id, str(session.id), session.refresh_version
+    )
+    return access, refresh
+
+
+async def user_by_login(identifier: str) -> User | None:
+    return await User.filter(login=identifier.strip().lower()).first()
+
+
+async def login_user(
+    identifier: str, password: str, ip: str, user_agent: str
+) -> LoginResult:
+    user = await user_by_login(identifier)
 
     if not user:
+        _timing_check_unknown_user(password)
         return None
 
-    if not pwd_context.verify(password, user.password_hash):
+    try:
+        valid = bcrypt.checkpw(
+            _password_bytes(password), user.password_hash.encode("utf-8")
+        )
+    except ValueError:
         return None
+
+    if not valid:
+        return None
+
+    if user.is_banned:
+        return "banned"
 
     if not user.is_active:
         return None
@@ -54,9 +142,10 @@ async def login_user(email: str, password: str, ip: str, user_agent: str):
         ip=ip,
         user_agent=user_agent,
         expires_at=now + timedelta(seconds=settings.REFRESH_TOKEN_TTL),
-        max_expires_at=now + timedelta(seconds=settings.MAX_TOKEN_LIFETIME)
+        max_expires_at=now + timedelta(seconds=settings.MAX_TOKEN_LIFETIME),
+        refresh_version=0,
     )
 
-    access, refresh = create_tokens(user.id, session_id)
+    access, refresh = create_tokens(user.id, session_id, session.refresh_version)
 
     return access, refresh, session

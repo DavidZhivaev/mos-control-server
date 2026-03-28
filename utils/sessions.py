@@ -1,4 +1,4 @@
-from app.models.session import Session
+from models.session import Session
 
 MAX_SESSIONS = 3
 
