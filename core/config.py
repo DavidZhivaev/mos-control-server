@@ -1,11 +1,14 @@
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+BASE_DIR = Path(__file__).resolve().parent
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    JWT_PRIVATE_KEY: str
-    JWT_PUBLIC_KEY: str
+    JWT_PRIVATE_KEY: str = ""
+    JWT_PUBLIC_KEY: str = ""
     JWT_ISSUER: str = "mos-control"
     JWT_AUDIENCE: str = "mos-control-api"
 
@@ -41,3 +44,6 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+settings.JWT_PRIVATE_KEY = (BASE_DIR / "jwt_private.pem").read_text()
+settings.JWT_PUBLIC_KEY = (BASE_DIR / "jwt_public.pem").read_text()
