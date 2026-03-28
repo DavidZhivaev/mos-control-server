@@ -1,14 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
+from tortoise.transactions import in_transaction
 
 from core.auth import get_current_user
 from core.ip import client_ip
+from core.permissions import require_min_role
+from core.role_defs import ROLE_OPERATOR
+from models.session import Session
 from models.user import User
 from services.audit_service import write_audit
 from services.auth_service import hash_password, verify_password, get_password_hash, set_password_hash
 from services.blocked_hosts_service import effective_blocked_hosts
 from services.last_edit_display import attach_last_editor_fields
 from services.user_present import present_me
-from services.user_service import get_user_for_viewer, search_users
+from services.user_service import can_view_user_profile, get_user_for_viewer, search_users
 from schemas.user import UserPasswordChange, UserSearchRequest, UserSelfUpdate
 
 router = APIRouter(tags=["users"])
@@ -105,3 +109,35 @@ async def read_user(
     if mode not in ("short", "full"):
         raise HTTPException(status_code=400, detail="mode: short или full")
     return await get_user_for_viewer(viewer, user_id, mode=mode)
+
+
+@router.delete("/{user_id}")
+async def delete_user(
+    user_id: int,
+    request: Request,
+    viewer: User = Depends(require_min_role(ROLE_OPERATOR)),
+):
+    target = await User.get_or_none(id=user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Не найден")
+    if target.id == viewer.id:
+        raise HTTPException(status_code=400, detail="Нельзя удалить свой аккаунт")
+    if not can_view_user_profile(viewer, target):
+        raise HTTPException(status_code=403, detail="Нет доступа")
+
+    await write_audit(
+        "user.deleted",
+        actor=viewer,
+        target_type="user",
+        target_id=str(target.id),
+        building=target.building,
+        ip=client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+        meta={"login": target.login},
+    )
+
+    async with in_transaction():
+        await Session.filter(user_id=target.id).delete()
+        await target.delete()
+
+    return {"status": "deleted", "id": target.id}

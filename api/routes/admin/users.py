@@ -2,14 +2,17 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from tortoise.transactions import in_transaction
 
 from core.ip import client_ip
-from core.permissions import require_min_role
+from core.permissions import require_admin_school_or_above, require_min_role
 from core.role_defs import ROLE_META, ROLE_OPERATOR, ROLE_STUDENT
 from models.session import Session
 from models.user import User
 from schemas.admin_ops import ClassTransferBody
-from schemas.user import BanRequest, UserAdminUpdate
+from schemas.storage import SessionResponse
+from schemas.user import BanRequest, UserAdminUpdate, UserPasswordSet
 from services.audit_service import write_audit
+from services.auth_service import generate_temporary_password, hash_password, set_password_hash
 from services.last_edit_display import attach_last_editor_fields
+from services.session_service import get_user_sessions, revoke_all_user_sessions
 from services.user_present import present_user
 from services.user_service import (
     ban_user,
@@ -208,3 +211,132 @@ async def admin_remove_user(
         await target.delete()
 
     return {"status": "deleted", "id": uid}
+
+
+@router.post("/{user_id}/reset-password")
+async def reset_user_password(
+    user_id: int,
+    request: Request,
+    actor: User = Depends(require_min_role(ROLE_OPERATOR)),
+):
+    target = await User.get_or_none(id=user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Не найден")
+    if not can_view_user_profile(actor, target):
+        raise HTTPException(status_code=403, detail="Нет доступа")
+    if target.id == actor.id:
+        raise HTTPException(status_code=400, detail="Нельзя сбросить пароль самому себе")
+
+    temp_password = generate_temporary_password()
+    new_hash = hash_password(temp_password)
+
+    mark_staff_edit(target, actor)
+    await set_password_hash(target, new_hash)
+
+    await invalidate_all_sessions(target.id)
+
+    await write_audit(
+        "user.password_reset_by_admin",
+        actor=actor,
+        target_type="user",
+        target_id=str(target.id),
+        building=target.building,
+        ip=client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+        meta={"reset_by": "admin"},
+    )
+
+    return {
+        "status": "reset",
+        "temporary_password": temp_password,
+        "message": "Пароль сброшен. Сообщите пользователю временный пароль.",
+    }
+
+
+@router.post("/{user_id}/password")
+async def set_user_password(
+    user_id: int,
+    body: UserPasswordSet,
+    request: Request,
+    actor: User = Depends(require_admin_school_or_above),
+):
+    target = await User.get_or_none(id=user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Не найден")
+    if not can_view_user_profile(actor, target):
+        raise HTTPException(status_code=403, detail="Нет доступа")
+    if target.id == actor.id:
+        raise HTTPException(status_code=400, detail="Нельзя изменить пароль самому себе")
+
+    new_hash = hash_password(body.new_password)
+    mark_staff_edit(target, actor)
+    await set_password_hash(target, new_hash)
+    await invalidate_all_sessions(target.id)
+
+    await write_audit(
+        "user.password_set_by_admin",
+        actor=actor,
+        target_type="user",
+        target_id=str(target.id),
+        building=target.building,
+        ip=client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+
+    return {"status": "ok", "user_id": target.id}
+
+
+@router.get("/{user_id}/sessions")
+async def get_user_sessions_list(
+    user_id: int,
+    actor: User = Depends(require_min_role(ROLE_OPERATOR)),
+):
+    target = await User.get_or_none(id=user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Не найден")
+    if not can_view_user_profile(actor, target):
+        raise HTTPException(status_code=403, detail="Нет доступа")
+
+    sessions = await get_user_sessions(user_id, active_only=True)
+    return {
+        "items": [
+            SessionResponse(
+                id=str(s.id),
+                ip=s.ip,
+                user_agent=s.user_agent[:200],
+                created_at=s.created_at.isoformat() if s.created_at else None,
+                expires_at=s.expires_at.isoformat() if s.expires_at else None,
+                is_active=s.is_active,
+            ).model_dump()
+            for s in sessions
+        ],
+        "count": len(sessions),
+    }
+
+
+@router.post("/{user_id}/sessions/revoke-all")
+async def revoke_all_user_sessions_route(
+    user_id: int,
+    request: Request,
+    actor: User = Depends(require_min_role(ROLE_OPERATOR)),
+):
+    target = await User.get_or_none(id=user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Не найден")
+    if not can_view_user_profile(actor, target):
+        raise HTTPException(status_code=403, detail="Нет доступа")
+
+    count = await revoke_all_user_sessions(user_id)
+
+    await write_audit(
+        "user.sessions_revoked_by_admin",
+        actor=actor,
+        target_type="user",
+        target_id=str(target.id),
+        building=target.building,
+        ip=client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+        meta={"revoked_count": count},
+    )
+
+    return {"status": "revoked", "revoked_count": count}

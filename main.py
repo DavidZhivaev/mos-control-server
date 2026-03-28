@@ -14,6 +14,13 @@ from api.routes.public import directory as public_directory
 from api.routes.stats import router as stats_router
 from api.routes import system as system_routes
 from api.routes.users import router as users_router
+from api.routes.sessions import router as sessions_router
+from api.routes.admin_sessions import router as admin_sessions_router
+from api.routes.notifications import router as notifications_router
+from api.routes.admin_notifications import router as admin_notifications_router
+from api.routes.storage import router as storage_router
+from api.routes.admin_stats import router as admin_stats_router
+from api.routes.admin_personal_data import router as admin_personal_data_router
 from core.config import settings
 from core.csrf import csrf_check_middleware
 from core.exception_handlers import setup_exception_handlers
@@ -109,6 +116,13 @@ app.include_router(stats_router)
 app.include_router(meta_router)
 app.include_router(public_directory.router)
 app.include_router(system_routes.router)
+app.include_router(sessions_router, prefix="/users")
+app.include_router(admin_sessions_router)
+app.include_router(notifications_router)
+app.include_router(admin_notifications_router)
+app.include_router(storage_router)
+app.include_router(admin_stats_router)
+app.include_router(admin_personal_data_router)
 
 register_tortoise(
     app,
@@ -121,6 +135,7 @@ register_tortoise(
             "models.verification_request",
             "models.global_blocked_host",
             "models.user_credentials",
+            "models.notification",
         ]
     },
     generate_schemas=True,

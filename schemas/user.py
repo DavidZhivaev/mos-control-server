@@ -149,10 +149,23 @@ class UserAdminUpdate(BaseModel):
 
 class BanRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=2000)
-    
+
     @field_validator("reason", mode="before")
     @classmethod
     def sanitize_reason(cls, v):
         if isinstance(v, str):
             return re.sub(r'<[^>]+>', '', v)
+        return v
+
+
+class UserPasswordSet(BaseModel):
+    new_password: str = Field(min_length=8, max_length=MAX_PASSWORD_LENGTH)
+
+    @field_validator("new_password", mode="before")
+    @classmethod
+    def validate_new_password(cls, v):
+        from core.password_strength import check_password_strength
+        result = check_password_strength(v)
+        if not result.is_valid:
+            raise ValueError(result.errors[0])
         return v

@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
 
 from core.config import settings
-from core.logging_config import get_audit_logger
+from core.logging_config import get_security_audit_logger
 
 
 class JWTKeyManager:
@@ -19,7 +19,7 @@ class JWTKeyManager:
         self._previous_public_key: Optional[str] = None
         self._key_id: str = settings.JWT_KEY_ID
         self._key_loaded_at: Optional[datetime] = None
-        self._audit_logger = get_audit_logger()
+        self._audit_logger = get_security_audit_logger()
 
     def generate_key_pair(self) -> Tuple[str, str]:
         private_key = rsa.generate_private_key(
@@ -55,17 +55,13 @@ class JWTKeyManager:
             private_path.write_text(private_key)
             public_path.write_text(public_key)
 
-        self._audit_logger.log(
-            event="jwt_keys_saved",
-            actor_id=None,
-            actor_login="system",
-            target_type="jwt_keys",
-            target_id=key_id,
-            action="save",
+        self._audit_logger.log_sensitive_operation(
+            user_id=0,
+            user_login="system",
+            operation="jwt_keys_save",
+            target="jwt_keys",
             ip="localhost",
-            user_agent="system",
-            success=True,
-            meta={"private_path": str(private_path), "public_path": str(public_path)}
+            details={"private_path": str(private_path), "public_path": str(public_path)},
         )
 
     def load_keys(self) -> bool:
@@ -93,17 +89,11 @@ class JWTKeyManager:
 
             return True
         except Exception as e:
-            self._audit_logger.log(
-                event="jwt_keys_load_error",
-                actor_id=None,
-                actor_login="system",
-                target_type="jwt_keys",
-                target_id=self._key_id,
-                action="load",
+            self._audit_logger.log_suspicious_activity(
+                activity_type="jwt_keys_load_error",
                 ip="localhost",
-                user_agent="system",
-                success=False,
-                meta={"error": str(e)}
+                details={"error": str(e), "key_id": self._key_id},
+                severity="high",
             )
             return False
 
@@ -130,17 +120,13 @@ class JWTKeyManager:
         self._key_id = new_key_id
         self._key_loaded_at = datetime.now(timezone.utc)
 
-        self._audit_logger.log(
-            event="jwt_keys_rotated",
-            actor_id=None,
-            actor_login="system",
-            target_type="jwt_keys",
-            target_id=new_key_id,
-            action="rotate",
+        self._audit_logger.log_sensitive_operation(
+            user_id=0,
+            user_login="system",
+            operation="jwt_keys_rotated",
+            target="jwt_keys",
             ip="localhost",
-            user_agent="system",
-            success=True,
-            meta={"new_key_id": new_key_id}
+            details={"new_key_id": new_key_id},
         )
 
         return True

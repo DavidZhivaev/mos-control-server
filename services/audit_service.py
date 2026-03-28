@@ -2,7 +2,7 @@ from typing import Any
 
 from models.audit_log import AuditLog
 from models.user import User
-from core.logging_config import get_audit_logger
+from core.logging_config import get_security_audit_logger
 
 
 async def write_audit(
@@ -29,20 +29,15 @@ async def write_audit(
         success=success,
         meta=meta or {},
     )
-    
-    audit_logger = get_audit_logger()
-    audit_logger.log(
-        event=action,
-        actor_id=actor.id if actor else None,
-        actor_login=actor.login if actor else None,
-        target_type=target_type or "unknown",
-        target_id=target_id,
-        action=action.split(".")[-1] if "." in action else action,
+
+    audit_logger = get_security_audit_logger()
+    audit_logger.log_access(
+        user_id=actor.id if actor else 0,
+        user_login=actor.login if actor else "system",
+        resource=f"{target_type}:{target_id}" if target_type else "unknown",
+        action=action,
         ip=ip or "",
-        user_agent=user_agent or "",
-        building=building,
         success=success,
-        meta=meta or {},
     )
-    
+
     return log_entry

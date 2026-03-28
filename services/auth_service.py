@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta
 from typing import Literal
 from uuid import uuid4
+import secrets
+import string
 
 import bcrypt
 from jose.exceptions import JWTError
@@ -17,6 +19,15 @@ _dummy_digest: bytes | None = None
 _security_logger = get_security_audit_logger()
 
 LoginResult = tuple[str, str, Session] | Literal["banned"] | None
+
+
+def generate_temporary_password(length: int = 12) -> str:
+    alphabet = string.ascii_letters + string.digits
+    password = ''.join(secrets.choice(alphabet) for _ in range(length))
+    password += secrets.choice(string.ascii_uppercase)
+    password += secrets.choice(string.ascii_lowercase)
+    password += secrets.choice(string.digits)
+    return ''.join(secrets.sample(password, len(password)))
 
 
 def _password_bytes(password: str) -> bytes:
