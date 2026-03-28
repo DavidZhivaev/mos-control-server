@@ -44,7 +44,6 @@ def create_tokens(user_id: int, session_id: str, refresh_version: int):
 
     return access_token, refresh_token
 
-
 def decode_jwt(token: str) -> dict:
     return jwt.decode(
         token,

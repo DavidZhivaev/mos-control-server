@@ -1,7 +1,20 @@
+import os
+import stat
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _check_key_file_permissions(file_path: Path) -> None:
+    if not file_path.exists():
+        raise FileNotFoundError(f"JWT ключ не найден: {file_path}")
+
+    if os.name == 'nt':
+        file_str = str(file_path).lower()
+        if 'public' in file_str or 'shared' in file_str:
+            print(f"WARNING: JWT ключ в потенциально общедоступной папке: {file_path}")
+        return
 
 
 class Settings(BaseSettings):
@@ -17,6 +30,9 @@ class Settings(BaseSettings):
     MAX_TOKEN_LIFETIME: int = 14 * 24 * 3600
 
     TRUST_PROXY: bool = False
+    TRUSTED_PROXY_IPS: str = "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+
+    FORCE_HTTPS: bool = False
 
     SUPPORT_EMAIL: str = "zhivaevda@1580.ru"
 
@@ -42,8 +58,46 @@ class Settings(BaseSettings):
     VERIFICATION_REQUEST_PER_HOUR_SCHOOL: int = 5
     VERIFICATION_REQUEST_PER_HOUR_EXTERNAL: int = 2
 
+    DATABASE_URL: str = ""
+
+    DB_ENGINE: str = "postgresql"
+    DB_HOST: str = "localhost"
+    DB_PORT: int = 5432
+    DB_NAME: str = "mos_control"
+    DB_USER: str = "mos_control"
+    DB_PASSWORD: str = ""
+
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
+
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    REDIS_DB: int = 0
+    REDIS_PASSWORD: str | None = None
+    USE_REDIS: bool = False
+
+    LOG_LEVEL: str = "INFO"
+    LOG_FILE: str | None = "logs/app.log"
+    LOG_AUDIT_FILE: str | None = "logs/audit.log"
+
 
 settings = Settings()
 
-settings.JWT_PRIVATE_KEY = (BASE_DIR / "jwt_private.pem").read_text()
-settings.JWT_PUBLIC_KEY = (BASE_DIR / "jwt_public.pem").read_text()
+_private_key_path = BASE_DIR / "jwt_private.pem"
+_public_key_path = BASE_DIR / "jwt_public.pem"
+
+_check_key_file_permissions(_private_key_path)
+_check_key_file_permissions(_public_key_path)
+
+settings.JWT_PRIVATE_KEY = _private_key_path.read_text()
+settings.JWT_PUBLIC_KEY = _public_key_path.read_text()
+
+if not settings.DATABASE_URL:
+    if settings.DB_ENGINE == "postgresql":
+        port = settings.DB_PORT or 5432
+        settings.DATABASE_URL = (
+            f"postgres://{settings.DB_USER}:{settings.DB_PASSWORD}@"
+            f"{settings.DB_HOST}:{port}/{settings.DB_NAME}"
+        )
+    else:
+        settings.DATABASE_URL = "sqlite://db.sqlite3"

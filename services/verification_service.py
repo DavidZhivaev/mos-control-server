@@ -9,7 +9,7 @@ from core.school_networks import building_for_school_ip
 from models.user import User
 from models.verification_request import VerificationRequest
 from services.audit_service import write_audit
-from services.auth_service import hash_password
+from services.auth_service import hash_password, set_password_hash
 
 
 async def submit_request(
@@ -113,7 +113,7 @@ async def approve_request(
     async with in_transaction():
         user = await User.create(
             login=req.login,
-            password_hash=req.password_hash,
+            password_hash=None,
             last_name=req.last_name,
             first_name=req.first_name,
             middle_name=mid,
@@ -129,6 +129,9 @@ async def approve_request(
             if storage_quota is not None
             else 0.25,
         )
+        
+        await set_password_hash(user, req.password_hash)
+        
         req.status = "approved"
         req.processed_at = datetime.utcnow()
         req.processed_by = actor

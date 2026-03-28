@@ -13,6 +13,7 @@ from core.role_defs import (
     role_at_least,
 )
 from models.user import User
+from models.user_credentials import UserCredentials
 from services.last_edit_display import attach_last_editor_fields
 from services.user_present import present_user
 from utils.sessions_extra import invalidate_all_sessions
@@ -125,3 +126,30 @@ async def list_banned(*, building: int | None, limit: int, offset: int):
     total = await qs.count()
     rows = await qs.offset(offset).limit(limit)
     return rows, total
+
+
+async def has_credentials(user: User) -> bool:
+    if user.password_hash:
+        return True
+    return await UserCredentials.filter(user=user).exists()
+
+
+async def migrate_password_to_credentials(user: User) -> None:
+    if not user.password_hash:
+        return
+    
+    existing = await UserCredentials.filter(user=user).first()
+    if existing:
+        user.password_hash = None
+        await user.save()
+        return
+    
+    await UserCredentials.create(
+        user=user,
+        password_hash=user.password_hash,
+        password_changed_at=None,
+        password_history=[],
+    )
+    
+    user.password_hash = None
+    await user.save()

@@ -9,6 +9,7 @@ from core.config import settings
 from core.security import create_tokens, decode_jwt
 from models.session import Session
 from models.user import User
+from models.user_credentials import UserCredentials
 from utils.sessions import enforce_session_limit
 
 _dummy_digest: bytes | None = None
@@ -43,6 +44,48 @@ def _timing_check_unknown_user(password: str) -> None:
         bcrypt.checkpw(_password_bytes(password), _dummy_digest)
     except ValueError:
         pass
+
+
+async def get_password_hash(user: User) -> str | None:
+    credentials = await UserCredentials.filter(user=user).first()
+    
+    if credentials:
+        return credentials.password_hash
+    
+    return user.password_hash
+
+
+async def set_password_hash(user: User, password_hash: str) -> None:
+    credentials = await UserCredentials.filter(user=user).first()
+    
+    if credentials:
+        if credentials.password_hash and credentials.password_hash not in credentials.password_history:
+            credentials.password_history.append(credentials.password_hash)
+            if len(credentials.password_history) > 5:
+                credentials.password_history = credentials.password_history[-5:]
+        
+        credentials.password_hash = password_hash
+        credentials.password_changed_at = datetime.utcnow()
+        await credentials.save()
+    else:
+        await UserCredentials.create(
+            user=user,
+            password_hash=password_hash,
+            password_changed_at=datetime.utcnow(),
+            password_history=[],
+        )
+    
+    if user.password_hash:
+        user.password_hash = None
+        await user.save()
+
+
+async def check_password_history(user: User, new_hash: str) -> bool:
+    credentials = await UserCredentials.filter(user=user).first()
+    if not credentials:
+        return True
+    
+    return new_hash not in credentials.password_history
 
 
 async def rotate_tokens(refresh_jwt: str):
@@ -114,9 +157,15 @@ async def login_user(
         _timing_check_unknown_user(password)
         return None
 
+    password_hash = await get_password_hash(user)
+    
+    if not password_hash:
+        _timing_check_unknown_user(password)
+        return None
+
     try:
         valid = bcrypt.checkpw(
-            _password_bytes(password), user.password_hash.encode("utf-8")
+            _password_bytes(password), password_hash.encode("utf-8")
         )
     except ValueError:
         return None
@@ -129,6 +178,10 @@ async def login_user(
 
     if not user.is_active:
         return None
+    
+    if user.password_hash:
+        from services.user_service import migrate_password_to_credentials
+        await migrate_password_to_credentials(user)
 
     await enforce_session_limit(user)
 

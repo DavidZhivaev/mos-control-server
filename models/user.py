@@ -19,7 +19,8 @@ class User(models.Model):
     internet_overrides = fields.JSONField(default=dict)
 
     role = fields.IntField()
-    password_hash = fields.CharField(max_length=255)
+    
+    password_hash = fields.CharField(max_length=255, null=True)
 
     is_active = fields.BooleanField(default=True)
 

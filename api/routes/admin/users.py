@@ -178,7 +178,6 @@ async def admin_remove_user(
     request: Request,
     actor: User = Depends(require_min_role(ROLE_OPERATOR)),
 ):
-    """Удаление учётной записи учащегося. Сессии удаляются."""
     target = await User.get_or_none(id=user_id)
     if not target:
         raise HTTPException(status_code=404, detail="Не найден")

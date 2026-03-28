@@ -1,8 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from core.auth import get_access_payload
-from core.ip import client_ip
-from core.rate_limit import auth_limiter, verification_request_allowed
+from core.client_ip import client_ip
+from core.rate_limit import (
+    is_auth_blocked_async,
+    register_auth_attempt_async,
+    check_refresh_rate_async,
+    verification_request_allowed_async,
+)
 from core.school_networks import is_school_ip
 from models.session import Session
 from models.user import User
@@ -22,7 +27,7 @@ async def request_account(data: VerificationSubmitRequest, request: Request):
     ip = client_ip(request)
     from_school = is_school_ip(ip)
 
-    if not verification_request_allowed(ip, data.login, from_school):
+    if not await verification_request_allowed_async(ip, data.login, from_school):
         raise HTTPException(
             status_code=429,
             detail="Слишком много заявок. Попробуйте позже.",
@@ -61,10 +66,9 @@ async def request_account(data: VerificationSubmitRequest, request: Request):
 async def login(data: LoginRequest, request: Request):
     ip = client_ip(request)
     user_agent = request.headers.get("user-agent", "")
-    ident_key = data.login.strip().lower()
     from_school = is_school_ip(ip)
 
-    if auth_limiter.is_blocked(ip, data.login, from_school):
+    if await is_auth_blocked_async(ip, data.login, from_school):
         raise HTTPException(status_code=429, detail="Too many attempts")
 
     result = await login_user(data.login, data.password, ip, user_agent)
@@ -84,10 +88,10 @@ async def login(data: LoginRequest, request: Request):
         raise banned_exception(u.ban_reason if u else None)
 
     if not result:
-        auth_limiter.register_attempt(ip, data.login, success=False, from_school=from_school)
+        await register_auth_attempt_async(ip, data.login, success=False, from_school=from_school)
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    auth_limiter.register_attempt(ip, data.login, success=True, from_school=from_school)
+    await register_auth_attempt_async(ip, data.login, success=True, from_school=from_school)
 
     access, refresh, session = result
 
@@ -111,7 +115,16 @@ async def login(data: LoginRequest, request: Request):
 
 
 @router.post("/refresh")
-async def refresh(data: RefreshRequest):
+async def refresh(request: Request, data: RefreshRequest):
+    ip = client_ip(request)
+    from_school = is_school_ip(ip)
+
+    if not await check_refresh_rate_async(ip, from_school):
+        raise HTTPException(
+            status_code=429,
+            detail="Слишком много запросов. Попробуйте позже.",
+        )
+
     tokens = await rotate_tokens(data.refresh_token)
     if not tokens:
         raise HTTPException(

@@ -1,13 +1,3 @@
-from fastapi import Request
+from core.client_ip import client_ip, client_ip_list
 
-from core.config import settings
-
-
-def client_ip(request: Request) -> str:
-    if settings.TRUST_PROXY:
-        forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
-    if request.client:
-        return request.client.host
-    return ""
+__all__ = ["client_ip", "client_ip_list"]

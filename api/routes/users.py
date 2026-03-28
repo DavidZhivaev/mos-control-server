@@ -4,7 +4,7 @@ from core.auth import get_current_user
 from core.ip import client_ip
 from models.user import User
 from services.audit_service import write_audit
-from services.auth_service import hash_password, verify_password
+from services.auth_service import hash_password, verify_password, get_password_hash, set_password_hash
 from services.blocked_hosts_service import effective_blocked_hosts
 from services.last_edit_display import attach_last_editor_fields
 from services.user_present import present_me
@@ -63,10 +63,14 @@ async def change_password(
     body: UserPasswordChange,
     user: User = Depends(get_current_user),
 ):
-    if not verify_password(body.old_password, user.password_hash):
+    current_hash = await get_password_hash(user)
+    
+    if not current_hash or not verify_password(body.old_password, current_hash):
         raise HTTPException(status_code=400, detail="Неверный текущий пароль")
-    user.password_hash = hash_password(body.new_password)
-    await user.save()
+    
+    new_hash = hash_password(body.new_password)
+    await set_password_hash(user, new_hash)
+    
     await write_audit(
         "user.password_change",
         actor=user,
